@@ -157,9 +157,7 @@ def df_manipulator_decorator(manipulate_func, apply_func_to_series=None, after=T
             # Function to apply transformations to the DataFrame
             def apply_transformations(df):
                 if apply_func_to_series_list is None:
-                    # Apply function to all columns
-                    for column in df.columns:
-                        df[column] = manipulate_func(df[column])
+                    df = manipulate_func(df)
                 else:
                     # Apply function to specified columns by names or types
                     for column in df.columns:
@@ -319,7 +317,7 @@ def fetch_param_values(param_names, input_args, input_kwargs, return_inserter=Fa
 
 def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=None):
     """
-    Decorator to apply a function over multiple time intervals within a specified date range.
+    Decorator to apply a function over a dynamic date range specified by start and end dates returned by the decorated function.
 
     Args:
         start_name (str): The name of the start date parameter.
@@ -397,6 +395,9 @@ def date_split_decorator(interval='1M', divisor=10, start_name='start_date', end
 
 
 def generate_decorator(funcs, inject=None, execute_on_call=False, output_to_input_map=None, overwrite_output=None):
+    """
+    Post decorator factory followed by inject_inputs and ExecuteFunctionOnCall decorators.
+    """
     if not isinstance(funcs, (list, tuple)):
         funcs = [funcs]
     if inject is None:
@@ -421,6 +422,9 @@ def generate_decorator(funcs, inject=None, execute_on_call=False, output_to_inpu
 
 
 def inject_execute_on_call(funcs, inject=None, execute_on_call=False, overwrite_output=None):
+    """
+    inject_inputs and ExecuteFunctionOnCall decorators.
+    """
     if not isinstance(funcs, (list, tuple)):
         funcs = [funcs]
     if inject is None:
@@ -560,13 +564,8 @@ class UninitializedArgument:
 
 def post_decorator_factory(output_to_input_map=None, overwrite_output=False):
     """
-    A decorator factory or a decorator that modifies and forwards the outputs
+    A factory function for a decorator that modifies and forwards the outputs
     of a function to another function based on a specified mapping.
-
-    Can be used as:
-    @post_decorator_factory
-    or
-    @post_decorator_factory(output_to_input_map={0: 1})
 
     Args:
         output_to_input_map (dict, optional): Keys are output positions of the decorated function,

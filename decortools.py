@@ -24,6 +24,57 @@ def copy_signature(source_fct):
     return _copy
 
 
+def concurrent_groupby_apply(df, apply_func, groupby, max_workers=4):
+    """
+    Splits a DataFrame into groups based on a specified column and applies a function concurrently to each group.
+    Args:
+        df (pandas.DataFrame): The DataFrame to process.
+        apply_func (callable): Function to apply to each group.
+        groupby (str): Column name to group by.
+        max_workers (int): The maximum number of concurrent workers.
+    Returns:
+        pandas.DataFrame: DataFrame with the results concatenated from each group after processing.
+    """
+    grouped = df.groupby(groupby)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(executor.map(apply_func, [group for _, group in grouped]))
+    return pd.concat(results)
+
+
+# def concurrent_df_processing(column_name, max_workers=5):
+#     """
+#     Decorator to split a DataFrame based on a column and process each split concurrently.
+#
+#     Args:
+#         column_name (str): The name of the column to split the DataFrame on.
+#         max_workers (int): The maximum number of concurrent workers.
+#
+#     Returns:
+#         function: A decorated function that processes parts of DataFrame concurrently.
+#     """
+#
+#     def decorator(func):
+#         @functools.wraps(func)
+#         def wrapper(df, *args, **kwargs):
+#             # Split the DataFrame based on the specified column
+#             grouped = df.groupby(column_name)
+#             results = []
+#             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+#                 # Submit each group to the decorated function
+#                 future_to_group = {
+#                     executor.submit(func, group, *args, **kwargs): name
+#                     for name, group in grouped
+#                 }
+#                 for future in concurrent.futures.as_completed(future_to_group):
+#                     results.append(future.result())
+#             # Optionally, you could concatenate results back into a single DataFrame
+#             # return pd.concat(results)
+#             return results
+#
+#         return wrapper
+#
+#     return decorator
+
 def inject_signature(source_func):
     """
     Decorator that replaces the *args and **kwargs parameters of a target function with explicit parameters
@@ -129,7 +180,7 @@ def object_manipulator_decorator(target_class, manipulate_func, after=False):
     return decorator
 
 
-def df_manipulator_decorator(manipulate_func, apply_func_to_series=None, after=True):
+def df_manipulator_decorator(manipulate_func, *args_, apply_func_to_series=None, after=True, pass_function=False, **kwargs_):
     """
     Decorator that applies a transformation function to specified DataFrame columns either before or after
     the decorated function executes, based on the 'after' parameter.
@@ -141,6 +192,7 @@ def df_manipulator_decorator(manipulate_func, apply_func_to_series=None, after=T
                                                         If None, applies to all columns.
         after (bool): If True, applies the function after the decorated function executes and replaces
                       the returned DataFrame if applicable; if False, applies it before the function.
+        pass_function (bool): If True, passes the decorated function as an argument to manipulate_func.
     """
 
     def decorator(func):
@@ -157,13 +209,21 @@ def df_manipulator_decorator(manipulate_func, apply_func_to_series=None, after=T
             # Function to apply transformations to the DataFrame
             def apply_transformations(df):
                 if apply_func_to_series_list is None:
-                    df = manipulate_func(df)
+                    if pass_function:
+                        df_ = manipulate_func(df, func, *args_, **kwargs_)
+                    else:
+                        df_ = manipulate_func(df, *args_, **kwargs_)
+                    # if df_ is not None:
+                    #     df = df_
                 else:
                     # Apply function to specified columns by names or types
                     for column in df.columns:
                         column_type = df[column].dtype
                         if column in apply_func_to_series_list or column_type in apply_func_to_series_list:
-                            df[column] = manipulate_func(df[column])
+                            if pass_function:
+                                df[column] = manipulate_func(df[column], func, *args_, **kwargs_)
+                            else:
+                                df[column] = manipulate_func(df[column], *args_, **kwargs_)
 
             if not after:
                 # Analyze the function's parameters to find the DataFrame
@@ -317,14 +377,14 @@ def fetch_param_values(param_names, input_args, input_kwargs, return_inserter=Fa
 
 def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=None):
     """
-    Decorator to apply a function over a dynamic date range specified by start and end dates returned by the decorated function.
+    Decorator to apply a function over a dynamic date range specified by the input start and end dates corrected bv the
+     start and end dates returned by each subsequent call (inside the wrapper) to the decorated function.
 
     Args:
-        start_name (str): The name of the start date parameter.
-        end_name (str): The name of the end date parameter.
+        start_name (str): The name or position of the start date parameter.
+        end_name (str): The name or position of the end date parameter.
         result_date_accessor_fn (callable): A function to extract the date from the result of the decorated function.
         aggregate_fn (callable): A function to aggregate the results of the decorated function.
-        tz (str or bool): Timezone to localize the datetime object to, True for UTC, False for local timezone, or None for no conversion.
 
     Returns:
         function: A decorated function that operates over specified intervals.
@@ -364,13 +424,16 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
     return decorator
 
 
-def date_split_decorator(interval='1M', divisor=10, start_name='start_date', end_name='end_date', aggregate_fn=None):
+def date_split_decorator(frequency='1M', divisor=1, start_name='start_date', end_name='end_date', aggregate_fn=lambda x: pd.concat(x)):
     """
     Decorator to apply a function over multiple time intervals within a specified date range.
 
     Args:
-        interval (str): A pandas frequency string indicating the splitting intervals.
+        frequency (str): A pandas frequency string indicating the splitting intervals.
         divisor (int): Number of divisions of the total period if intervals are not explicitly provided.
+        start_name (str): The name or position of the start date parameter.
+        end_name (str): The name or position of the end date parameter.
+        aggregate_fn (callable): A function to aggregate the results of the decorated function.
 
     Returns:
         function: A decorated function that operates over specified intervals.
@@ -380,7 +443,7 @@ def date_split_decorator(interval='1M', divisor=10, start_name='start_date', end
         @ft.wraps(func)
         def wrapper(*args, **kwargs):
             (start_date, end_date), reinsert_parameters_fn = fetch_param_values([start_name, end_name], args, kwargs, func=func, return_inserter=True)
-            intervals = dtf.create_intervals_from_timestamps(dtf.calculate_date_ranges(start_date, end_date, interval, divisor))
+            intervals = dtf.create_intervals_from_timestamps(dtf.calculate_date_ranges(start_date, end_date, frequency, divisor))
             results = []
             for start, end in intervals:
                 updated_args, updated_kwargs = reinsert_parameters_fn({start_name: start, end_name: end})

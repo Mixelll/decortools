@@ -375,7 +375,7 @@ def fetch_param_values(param_names, input_args, input_kwargs, return_inserter=Fa
         return values_dict
 
 
-def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=None):
+def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=None, max_period=None):
     """
     Decorator to apply a function over a dynamic date range specified by the input start and end dates corrected bv the
      start and end dates returned by each subsequent call (inside the wrapper) to the decorated function.
@@ -385,10 +385,13 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
         end_name (str): The name or position of the end date parameter.
         result_date_accessor_fn (callable): A function to extract the date from the result of the decorated function.
         aggregate_fn (callable): A function to aggregate the results of the decorated function.
+        max_period (str): The maximum period to consider for each incremental change of the start or end date.
 
     Returns:
         function: A decorated function that operates over specified intervals.
     """
+    if max_period:
+        max_period = pd.to_timedelta(max_period)
 
     def decorator(func):
         @ft.wraps(func)
@@ -403,7 +406,7 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
             cast_fn = lambda x: x if start_date_cls is datetime else start_date_cls(x.strftime(date_format) if date_format else x)
             results = []
             date_range = [start_date, end_date]
-            while date_range[0] < date_range[1] and date_range[1] - date_range[0] > timedelta(days=1):
+            while date_range[0] < date_range[1] and date_range[1] - date_range[0] > timedelta(hours=1):
                 updated_args, updated_kwargs = reinsert_parameters_fn({start_name: cast_fn(date_range[0]), end_name: cast_fn(date_range[1])})
                 results.append(func(*updated_args, **updated_kwargs))
                 returned_dates = result_date_accessor_fn(results[-1])
@@ -411,10 +414,14 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
                     logging.warning(f"No dates returned for the interval {date_range[0]} to {date_range[1]}.")
                     break
                 naive_fn = lambda x: x.replace(tzinfo=None) if tz is None else x
-                if naive_fn(min(returned_dates)) - date_range[0] < date_range[1] - naive_fn(max(returned_dates)):
-                    date_range = [naive_fn(max(returned_dates)), date_range[1]]
+                min_date = naive_fn(min(returned_dates))
+                max_date = naive_fn(max(returned_dates))
+                if min_date - date_range[0] < date_range[1] - max_date:
+                    start_date = date_range[0] + max_period if max_period is not None and max_date - date_range[0] > max_period else max_date
+                    date_range = [start_date, date_range[1]]
                 else:
-                    date_range = [date_range[0], naive_fn(min(returned_dates))]
+                    end_date = date_range[1] - max_period if max_period is not None and date_range[1] - min_date > max_period else min_date
+                    date_range = [date_range[0], end_date]
             if aggregate_fn:
                 return aggregate_fn(results)
             return results

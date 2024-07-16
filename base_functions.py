@@ -1,4 +1,14 @@
 import inspect
+import concurrent.futures
+
+
+def to_list(x, ignore_none=True, none_empty_list=False):
+    if ignore_none:
+        return [x] if x is not None and not isinstance(x, (list, tuple)) else x
+    elif none_empty_list:
+        return [] if x is None else [x] if not isinstance(x, (list, tuple)) else x
+    else:
+        return [x] if not isinstance(x, (list, tuple)) else x
 
 
 def get_required_param_names_from_func(sig_or_func=None):
@@ -36,3 +46,4 @@ def contains_dict(item):
             if contains_dict(subitem):  # Recursively check the elements
                 return True
     return False  # No dictionary found
+

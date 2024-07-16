@@ -229,7 +229,7 @@ def calculate_date_ranges(start_date, end_date=None, interval='1M', divisor=1, d
 
     # Convert start_date if it's a string and deduce format
     if isinstance(start_date, str):
-        date_format, tz = deduce_date_format(start_date, return_tz=False)
+        date_format, tz = deduce_date_format(start_date, return_tz=True)
         start_date = datetime.strptime(start_date, date_format)
 
     if end_date is None:

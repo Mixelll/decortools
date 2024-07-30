@@ -375,7 +375,7 @@ def fetch_param_values(param_names, input_args, input_kwargs, return_inserter=Fa
         return values_dict
 
 
-def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=None, max_period=None):
+def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=list, max_period=None):
     """
     Decorator to apply a function over a dynamic date range specified by the input start and end dates corrected bv the
      start and end dates returned by each subsequent call (inside the wrapper) to the decorated function.
@@ -408,6 +408,8 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
             date_range = [start_date, end_date]
             while date_range[0] < date_range[1] and date_range[1] - date_range[0] > timedelta(hours=1):
                 updated_args, updated_kwargs = reinsert_parameters_fn({start_name: cast_fn(date_range[0]), end_name: cast_fn(date_range[1])})
+                if not aggregate_fn:
+                    results = []
                 results.append(func(*updated_args, **updated_kwargs))
                 returned_dates = result_date_accessor_fn(results[-1])
                 if returned_dates.empty:

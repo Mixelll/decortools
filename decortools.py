@@ -375,7 +375,7 @@ def fetch_param_values(param_names, input_args, input_kwargs, return_inserter=Fa
         return values_dict
 
 
-def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=list, max_period=None):
+def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', result_date_accessor_fn=None, aggregate_fn=list, max_period=None, force_period=None):
     """
     Decorator to apply a function over a dynamic date range specified by the input start and end dates corrected bv the
      start and end dates returned by each subsequent call (inside the wrapper) to the decorated function.
@@ -390,8 +390,10 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
     Returns:
         function: A decorated function that operates over specified intervals.
     """
-    if max_period:
+    if max_period is not None:
         max_period = pd.to_timedelta(max_period)
+    if force_period is not None:
+        force_period = pd.to_timedelta(force_period)
 
     def decorator(func):
         @ft.wraps(func)
@@ -409,8 +411,11 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
             while date_range[0] < date_range[1] and date_range[1] - date_range[0] > timedelta(hours=1):
                 updated_args, updated_kwargs = reinsert_parameters_fn({start_name: cast_fn(date_range[0]), end_name: cast_fn(date_range[1])})
                 if not aggregate_fn:
-                    results = []
+                    results.clear()
                 results.append(func(*updated_args, **updated_kwargs))
+                # print(f"Results length: {len(results)}")
+                # if force_period is not None:
+                #     date_range = [start_date - force_period, end
                 returned_dates = result_date_accessor_fn(results[-1])
                 if returned_dates.empty:
                     logging.warning(f"No dates returned for the interval {date_range[0]} to {date_range[1]}.")
@@ -433,7 +438,7 @@ def dynamic_date_range_decorator(start_name='start_date', end_name='end_date', r
     return decorator
 
 
-def date_split_decorator(frequency='1M', divisor=1, start_name='start_date', end_name='end_date', aggregate_fn=lambda x: pd.concat(x)):
+def date_split_decorator(frequency='1D', divisor=1, start_name='start_date', end_name='end_date', start_date=None, end_date=None, aggregate_fn=lambda x: pd.concat(x)):
     """
     Decorator to apply a function over multiple time intervals within a specified date range.
 
@@ -451,13 +456,21 @@ def date_split_decorator(frequency='1M', divisor=1, start_name='start_date', end
     def decorator(func):
         @ft.wraps(func)
         def wrapper(*args, **kwargs):
+            lmbd = lambda dates, re_fn: fetch_param_values(dates, args, kwargs, func=func, return_inserter=True)
+            if start_date is None and end_date is None:
+                (start_date, end_date), reinsert_parameters_fn = lmbd([start_name, end_name])
+            elif start_date is None:
+                (start_date, ), reinsert_parameters_fn = lmbd([start_name])
+            elif end_date is None:
+                (start_date, ), reinsert_parameters_fn = lmbd([start_name])
             (start_date, end_date), reinsert_parameters_fn = fetch_param_values([start_name, end_name], args, kwargs, func=func, return_inserter=True)
             intervals = dtf.create_intervals_from_timestamps(dtf.calculate_date_ranges(start_date, end_date, frequency, divisor))
             results = []
             for start, end in intervals:
                 updated_args, updated_kwargs = reinsert_parameters_fn({start_name: start, end_name: end})
-                results.append(func(*updated_args, **updated_kwargs))
-            if aggregate_fn:
+                if aggregate_fn is not None:
+                    results.append(func(*updated_args, **updated_kwargs))
+            if aggregate_fn is not None:
                 return aggregate_fn(results)
             return results
 
